@@ -4,7 +4,7 @@ This is a full-stack web application that acts as a smart internal search tool. 
 
 This tool is designed for any team that generates a large number of documents (like marketing, legal, or research) and needs a simple way to find information instantly.
 
-**Live Demo:** `[YOUR DEPLOYED URL - WE WILL ADD THIS NEXT]`
+**Live Demo:** https://hackathon-search-app.vercel.app/
 
 ---
 
