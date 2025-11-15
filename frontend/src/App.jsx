@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 
-const API_URL = 'http://localhost:5000';
-
+const API_URL = 'https://hackathon-search-app.onrender.com';
 function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
