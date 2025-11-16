@@ -6,7 +6,7 @@ This is my entry for the **AI-Powered Marketing Hackathon** under **Challenge #4
 I built this because finding old documents was frustrating — keyword search often fails when you don’t remember exact terms. This tool uses **semantic search** powered by AI embeddings so it understands the *meaning* behind your query.
 
 **🔗 Live Demo:** https://hackathon-search-app.vercel.app  
-**▶️ Demo Video:** [YOUR DEMO VIDEO LINK]
+**▶️ Demo Video:** https://drive.google.com/file/d/1Tugx6UMDZhX4Y3CpmTcpdLyEuFK2aElA/view?usp=sharing
 
 ---
 
