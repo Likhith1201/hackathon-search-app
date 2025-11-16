@@ -11,7 +11,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 // --- Config and Setup ---
 dotenv.config(); 
 
-// --- Database Connection  ---
+// --- Database Connection ---
 const { Pool } = pg;
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL 
@@ -34,8 +34,6 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
 
 // --- Helper Functions ---
-
-//  keyword categorization
 const getCategory = (content) => {
   const text = content.toLowerCase();
   if (text.includes('marketing') || text.includes('strategy') || text.includes('campaign')) {
@@ -54,15 +52,19 @@ const getCategory = (content) => {
 async function getEmbedding(text) {
   try {
     const chunks = [];
-    const maxChunkSize = 10000; 
+    const maxChunkSize = 10000;
     for (let i = 0; i < text.length; i += maxChunkSize) {
       chunks.push(text.substring(i, i + maxChunkSize));
     }
 
     const result = await model.batchEmbedContents({
-      requests: chunks.map(chunk => ({ content: chunk, taskType: "RETRIEVAL_DOCUMENT" }))
+      requests: chunks.map(chunk => ({
+        content: { parts: [{text: chunk}], role: "user" }, 
+        taskType: "RETRIEVAL_DOCUMENT"
+      }))
     });
 
+    // Average the embeddings of all chunks
     const embeddings = result.embeddings.map(e => e.values);
     if (embeddings.length === 0) return null;
 
@@ -96,7 +98,7 @@ app.get('/', (req, res) => {
   res.json({ message: 'AI Semantic Search Backend is Live!' });
 });
 
-// ---  /upload ROUTE (with AI) ---
+// --- /upload ROUTE  ---
 app.post('/upload', upload.single('document'), async (req, res) => {
   try {
     if (!req.file) {
@@ -106,12 +108,12 @@ app.post('/upload', upload.single('document'), async (req, res) => {
     const file = req.file;
     const originalName = file.originalname;
     const content = fs.readFileSync(file.path, 'utf-8');
-    fs.unlinkSync(file.path); 
+    fs.unlinkSync(file.path); // Delete temp file
 
     // 1. Get category
     const category = getCategory(content);
 
-    // 2. Get AI embedding for the file content
+    // 2. Get AI embedding 
     console.log(`Generating embedding for ${originalName}...`);
     const embedding = await getEmbedding(content);
     if (!embedding) {
@@ -141,7 +143,7 @@ app.post('/upload', upload.single('document'), async (req, res) => {
   }
 });
 
-// ---  /search ROUTE (with AI) ---
+// --- /search ROUTE  ---
 app.get('/search', async (req, res) => {
   const { term } = req.query;
 
@@ -152,8 +154,9 @@ app.get('/search', async (req, res) => {
   try {
     // 1. Get AI embedding for the SEARCH TERM
     console.log(`Generating embedding for search term: "${term}"...`);
+
     const searchEmbeddingResult = await model.embedContent({
-      content: term,
+      content: { parts: [{text: term}], role: "user" }, 
       taskType: "RETRIEVAL_QUERY"
     });
     const searchEmbedding = searchEmbeddingResult.embedding.values;
@@ -174,17 +177,16 @@ app.get('/search', async (req, res) => {
       const content = doc.content.toLowerCase();
       const termLower = term.toLowerCase();
       let index = content.indexOf(termLower);
-      if (index === -1) index = 0; // If exact term not found, start from beginning
-
+      if (index === -1) index = 0; 
       const start = Math.max(0, index - 50);
-      const end = Math.min(content.length, index + 100); 
+      const end = Math.min(content.length, index + 100);
       const snippet = `...${doc.content.substring(start, end)}...`;
 
       return {
         filename: doc.filename,
         snippet: snippet,
         category: doc.category,
-        distance: doc.distance 
+        distance: doc.distance
       };
     });
 
