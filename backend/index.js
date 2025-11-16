@@ -3,31 +3,39 @@ import cors from 'cors';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import pg from 'pg';
+import dotenv from 'dotenv';
+import { registerType } from 'pgvector/pg'; 
+import { GoogleGenerativeAI } from '@google/generative-ai'; 
 
-// ---  Database Imports ---
-import pg from 'pg'; 
-import dotenv from 'dotenv'; 
+// --- Config and Setup ---
+dotenv.config(); 
 
-dotenv.config();
-
-// ---  Database Connection ---
+// --- Database Connection  ---
 const { Pool } = pg;
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false 
-  }
+  connectionString: process.env.DATABASE_URL 
 });
 
-pool.connect((err) => {
-  if (err) {
-    console.error('Database connection error', err.stack);
-  } else {
+(async () => {
+  try {
+    const client = await pool.connect();
     console.log('Successfully connected to PostgreSQL database');
+    await registerType(client); 
+    console.log('pgvector type registered');
+    client.release();
+  } catch (err) {
+    console.error('Database connection or pgvector error', err.stack);
   }
-});
+})();
 
-// ---  Categorization Function  ---
+// --- Google AI Setup ---
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+
+// --- Helper Functions ---
+
+//  keyword categorization
 const getCategory = (content) => {
   const text = content.toLowerCase();
   if (text.includes('marketing') || text.includes('strategy') || text.includes('campaign')) {
@@ -42,23 +50,53 @@ const getCategory = (content) => {
   return 'General';
 };
 
-// --- Express & Multer Setup  ---
+// --- AI Embedding Function ---
+async function getEmbedding(text) {
+  try {
+    const chunks = [];
+    const maxChunkSize = 10000; 
+    for (let i = 0; i < text.length; i += maxChunkSize) {
+      chunks.push(text.substring(i, i + maxChunkSize));
+    }
+
+    const result = await model.batchEmbedContents({
+      requests: chunks.map(chunk => ({ content: chunk, taskType: "RETRIEVAL_DOCUMENT" }))
+    });
+
+    const embeddings = result.embeddings.map(e => e.values);
+    if (embeddings.length === 0) return null;
+
+    const avgEmbedding = new Array(embeddings[0].length).fill(0);
+    for (const emb of embeddings) {
+      for (let i = 0; i < emb.length; i++) {
+        avgEmbedding[i] += emb[i];
+      }
+    }
+    for (let i = 0; i < avgEmbedding.length; i++) {
+      avgEmbedding[i] /= embeddings.length;
+    }
+    
+    return avgEmbedding;
+
+  } catch (error) {
+    console.error('Error getting embedding:', error.message);
+    throw new Error('Failed to generate embedding');
+  }
+}
+
+// --- Express & Multer Setup ---
 const app = express();
 const PORT = 5000;
 const upload = multer({ dest: 'uploads/' });
-
-if (!fs.existsSync('uploads')) {
-  fs.mkdirSync('uploads');
-}
 
 app.use(cors());
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  res.json({ message: 'Hello from the backend server! (Now with PostgreSQL)' });
+  res.json({ message: 'AI Semantic Search Backend is Live!' });
 });
 
-// ---  /upload ROUTE ---
+// ---  /upload ROUTE (with AI) ---
 app.post('/upload', upload.single('document'), async (req, res) => {
   try {
     if (!req.file) {
@@ -66,28 +104,34 @@ app.post('/upload', upload.single('document'), async (req, res) => {
     }
 
     const file = req.file;
-    const filePath = file.path;
     const originalName = file.originalname;
+    const content = fs.readFileSync(file.path, 'utf-8');
+    fs.unlinkSync(file.path); 
 
-    const content = fs.readFileSync(filePath, 'utf-8');
+    // 1. Get category
     const category = getCategory(content);
 
-    // ---  Insert into PostgreSQL Database ---
+    // 2. Get AI embedding for the file content
+    console.log(`Generating embedding for ${originalName}...`);
+    const embedding = await getEmbedding(content);
+    if (!embedding) {
+      return res.status(500).json({ error: 'Could not generate AI embedding.' });
+    }
+    console.log('Embedding generated successfully.');
+
+    // 3. Save to PostgreSQL
     const queryText = `
-      INSERT INTO documents (filename, content, category)
-      VALUES ($1, $2, $3)
+      INSERT INTO documents (filename, content, category, embedding)
+      VALUES ($1, $2, $3, $4)
       RETURNING id
     `;
-    const queryParams = [originalName, content, category];
+    const embeddingString = `[${embedding.join(',')}]`;
+    const queryParams = [originalName, content, category, embeddingString];
     
     await pool.query(queryText, queryParams);
-
-    fs.unlinkSync(filePath); 
-
-    console.log(`Uploaded, categorized, and saved to DB: ${originalName}`);
     
     res.json({
-      message: 'File uploaded and saved to database successfully!',
+      message: 'File uploaded, vectorized, and saved to database!',
       filename: originalName,
     });
 
@@ -97,7 +141,7 @@ app.post('/upload', upload.single('document'), async (req, res) => {
   }
 });
 
-// ---  /search ROUTE ---
+// ---  /search ROUTE (with AI) ---
 app.get('/search', async (req, res) => {
   const { term } = req.query;
 
@@ -105,44 +149,54 @@ app.get('/search', async (req, res) => {
     return res.status(400).json({ error: 'No search term provided.' });
   }
 
-  const searchTerm = `%${term}%`; 
-
   try {
-    // ---  Select from PostgreSQL Database ---
+    // 1. Get AI embedding for the SEARCH TERM
+    console.log(`Generating embedding for search term: "${term}"...`);
+    const searchEmbeddingResult = await model.embedContent({
+      content: term,
+      taskType: "RETRIEVAL_QUERY"
+    });
+    const searchEmbedding = searchEmbeddingResult.embedding.values;
+    const searchEmbeddingString = `[${searchEmbedding.join(',')}]`;
+
+    // 2. Perform a vector similarity search in PostgreSQL
     const queryText = `
-      SELECT filename, content, category
+      SELECT filename, content, category, embedding <=> $1 AS distance
       FROM documents
-      WHERE content ILIKE $1 OR filename ILIKE $1
+      ORDER BY distance ASC
+      LIMIT 5
     `;
     
-    const { rows } = await pool.query(queryText, [searchTerm]);
+    const { rows } = await pool.query(queryText, [searchEmbeddingString]);
     
+    // 3. Format results
     const results = rows.map(doc => {
       const content = doc.content.toLowerCase();
       const termLower = term.toLowerCase();
-      
-      const index = content.indexOf(termLower);
+      let index = content.indexOf(termLower);
+      if (index === -1) index = 0; // If exact term not found, start from beginning
+
       const start = Math.max(0, index - 50);
-      const end = Math.min(content.length, index + 50);
+      const end = Math.min(content.length, index + 100); 
       const snippet = `...${doc.content.substring(start, end)}...`;
 
       return {
         filename: doc.filename,
         snippet: snippet,
         category: doc.category,
+        distance: doc.distance 
       };
     });
 
-    console.log(`Search for '${term}' found ${results.length} results from DB.`);
+    console.log(`Semantic search for '${term}' found ${results.length} results.`);
     res.json({ results: results });
 
   } catch (error) {
-    console.error('Error during search:', error);
-    res.status(500).json({ error: 'Server error during search.' });
+    console.error('Error during AI search:', error);
+    res.status(500).json({ error: 'Server error during AI search.' });
   }
 });
 
-// --- Start the Server ---
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 });
