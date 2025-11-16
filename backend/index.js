@@ -16,6 +16,21 @@ if (!fs.existsSync('uploads')) {
   fs.mkdirSync('uploads');
 }
 
+// ---  Automatic Categorization Function ---
+const getCategory = (content) => {
+  const text = content.toLowerCase();
+  if (text.includes('marketing') || text.includes('strategy') || text.includes('campaign')) {
+    return 'Marketing';
+  }
+  if (text.includes('product') || text.includes('roadmap') || text.includes('feature')) {
+    return 'Product';
+  }
+  if (text.includes('q4') || text.includes('q3') || text.includes('internal') || text.includes('memo')) {
+    return 'Internal';
+  }
+  return 'General'; 
+};
+
 // --- Middleware ---
 app.use(cors());
 app.use(express.json());
@@ -25,7 +40,7 @@ app.get('/', (req, res) => {
   res.json({ message: 'Hello from the backend server!' });
 });
 
-// --- UPLOAD ROUTE ---
+// ---  UPLOAD ROUTE ---
 app.post('/upload', upload.single('document'), (req, res) => {
   try {
     if (!req.file) {
@@ -38,15 +53,17 @@ app.post('/upload', upload.single('document'), (req, res) => {
 
     const content = fs.readFileSync(filePath, 'utf-8');
 
+    const category = getCategory(content);
+
     documentDatabase.push({
       filename: originalName,
       content: content,
+      category: category, 
     });
 
     fs.unlinkSync(filePath);
 
-    console.log(`Successfully uploaded and processed: ${originalName}`);
-    console.log('Current database:', documentDatabase.map(doc => doc.filename));
+    console.log(`Uploaded & categorized '${originalName}' as '${category}'`);
     
     res.json({
       message: 'File uploaded and processed successfully!',
@@ -74,15 +91,15 @@ app.get('/search', (req, res) => {
     const content = doc.content.toLowerCase();
     
     if (content.includes(searchTerm)) {
-      // Simple snippet generation: find first occurrence
       const index = content.indexOf(searchTerm);
-      const start = Math.max(0, index - 50); // 50 chars before
-      const end = Math.min(content.length, index + 50); // 50 chars after
+      const start = Math.max(0, index - 50);
+      const end = Math.min(content.length, index + 50);
       const snippet = `...${content.substring(start, end)}...`;
 
       results.push({
         filename: doc.filename,
         snippet: snippet,
+        category: doc.category, // We're sending the category to the frontend
       });
     }
   }

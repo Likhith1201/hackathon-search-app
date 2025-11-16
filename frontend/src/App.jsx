@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 
 const API_URL = 'https://hackathon-search-app.onrender.com';
+
 function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploadMessage, setUploadMessage] = useState('');
   
-  // --- Search State ---
   const [searchResults, setSearchResults] = useState([]); 
   const [searchMessage, setSearchMessage] = useState('Your search results will appear here...');
 
@@ -15,10 +15,8 @@ function App() {
     setUploadMessage('');
   };
 
-  // --- UPLOAD FUNCTION  ---
   const handleUpload = async (event) => {
     event.preventDefault(); 
-    
     if (!selectedFile) {
       setUploadMessage('Please select a file first.');
       return;
@@ -47,20 +45,16 @@ function App() {
     }
   };
 
-  // ---  SEARCH FUNCTION ---
   const handleSearch = async (event) => {
-    event.preventDefault(); // Stop the form from refreshing
-    
+    event.preventDefault(); 
     if (!searchTerm) {
       setSearchMessage('Please enter a search term.');
       setSearchResults([]);
       return;
     }
-
     setSearchMessage('Searching...');
 
     try {
-      // We send the search term as a URL query parameter
       const response = await fetch(`${API_URL}/search?term=${encodeURIComponent(searchTerm)}`);
       const data = await response.json();
 
@@ -116,16 +110,18 @@ function App() {
         </form>
       </div>
 
-      {/* --- RESULTS SECTION  --- */}
       <div className="results-container">
         <h2>Results</h2>
         
-        {/* Show a message if there are no results */}
         {searchResults.length === 0 && <p>{searchMessage}</p>}
 
         {searchResults.map((result, index) => (
           <div key={index} className="result-item">
-            <h3>{result.filename}</h3>
+            <div className="result-item-header">
+              <h3>{result.filename}</h3>
+              <span className="category-tag">{result.category}</span>
+            </div>
+
             <p dangerouslySetInnerHTML={{ 
               __html: result.snippet
                 .replace(new RegExp(searchTerm, 'gi'), (match) => `<strong>${match}</strong>`)
